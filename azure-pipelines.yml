@@ -1,0 +1,226 @@
+#🎢 THEME-PARK PIPELINE CI-CD
+
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    exclude:
+      - README.md
+      - terraform_theme_park/main.tf
+
+variables:
+  # ACR configuration
+  registryServiceConnection: "themepark-sc"
+  imageRepository: "theme-park-api"
+  containerRegistry: "themeparkacr.azurecr.io"
+  dockerfilePath: "**/Dockerfile"
+  tag: "$(Build.BuildId)"
+  imagePullSecret: "themeparkacrc839-auth"
+
+  # Agent VM image name
+  vmImageName: "ubuntu-20.04"
+
+stages:
+  - stage: Build
+    displayName: Build stage
+
+    jobs:
+      - job: Build
+        displayName: Build and test
+        pool:
+          vmImage: $(vmImageName)
+        steps:
+          - task: JavaToolInstaller@0
+            displayName: Set Java version to 17
+            inputs:
+              versionSpec: "17"
+              jdkArchitectureOption: "x64"
+              jdkSourceOption: "PreInstalled"
+          - task: Gradle@3
+            displayName: Build JAR file and run unit tests
+            inputs:
+              gradleWrapperFile: "gradlew"
+              tasks: "build"
+              publishJUnitResults: true
+              testResultsFiles: "**/TEST-*.xml"
+              javaHomeOption: "JDKVersion"
+              sonarQubeRunAnalysis: false
+              pmdRunAnalysis: false
+              spotBugsAnalysis: false
+          - task: Gradle@3
+            displayName: Run static code analysis
+            continueOnError: true
+            inputs:
+              gradleWrapperFile: "gradlew"
+              tasks: "pmdMain pmdTest"
+              publishJUnitResults: false
+              javaHomeOption: "JDKVersion"
+              sonarQubeRunAnalysis: false
+              pmdRunAnalysis: true
+              spotBugsAnalysis: false
+          - task: Docker@2
+            displayName: Build and Push to ACR registry
+            inputs:
+              command: buildAndPush
+              repository: $(imageRepository)
+              dockerfile: $(dockerfilePath)
+              containerRegistry: $(registryServiceConnection)
+              tags: |
+                $(tag)
+
+      - job: PublishArtifact
+        displayName: Publish artifacts
+        pool:
+          vmImage: $(vmImageName)
+        steps:
+          - bash: |
+              az login --service-principal -u $(THEME_PARK_SP_APPID) -p $(THEME_PARK_SP_PASSWORD) --tenant $(THEME_PARK_SP_TENANTID)
+              COSMOSDB_URI=$(az cosmosdb keys list --name theme-park-cosmosdb --resource-group THEME_PARK_rg --subscription $(DST_SUBSCRIPTION_ID)  --type connection-strings | jq '.connectionStrings[0].connectionString')
+
+              # Workaround for sed using ampersands as special characters
+              echo -n "$COSMOSDB_URI" > uri.txt
+              sed -i 's*&*\\\&*g' uri.txt
+              COSMOSDB_URI=$(cat uri.txt | tr -d '\n')
+
+              # Replacing registry image
+              sed -i "s*dheang/theme-park-api:1.0.0*$(containerRegistry)/$(imageRepository):$(tag)*g" aks_theme_park/themepark.yaml
+
+              # Replacing env variables from manifest file
+              sed -i "s*\"mongodb://localhost:27017\"*$COSMOSDB_URI*g" aks_theme_park/themepark.yaml
+
+              # Replacing uri for database seeder for testing
+              sed -i "s*\"mongodb://localhost:27017\"*$COSMOSDB_URI*g" dbseeder.js
+              mkdir "$(Build.ArtifactStagingDirectory)/postman"
+            displayName: DB URI Configuration
+          - task: CopyFiles@2
+            displayName: "Copy manifests"
+            inputs:
+              contents: "aks_theme_park/**"
+              targetFolder: "$(Build.ArtifactStagingDirectory)"
+          - publish: "$(Build.ArtifactStagingDirectory)/aks_theme_park"
+            displayName: "Publish manifests"
+            artifact: manifests
+
+          - task: CopyFiles@2
+            displayName: "Copy postman test"
+            inputs:
+              contents: "postman-collection.json"
+              targetFolder: "$(Build.ArtifactStagingDirectory)/postman"
+          - task: CopyFiles@2
+            displayName: "Copy database seed data for tests"
+            inputs:
+              contents: "dbseeder.js"
+              targetFolder: "$(Build.ArtifactStagingDirectory)/postman"
+          - publish: "$(Build.ArtifactStagingDirectory)/postman"
+            displayName: "Publish postman test"
+            artifact: postman
+
+  - stage: QA
+    displayName: QA stage
+    dependsOn: Build
+
+    jobs:
+      - deployment: Deploy
+        displayName: Deploy to Test cluster
+        pool:
+          vmImage: $(vmImageName)
+        environment: "DevTest.default"
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - download: current
+                  displayName: Downloading kubernetes manifests
+                  artifact: manifests
+                - bash: |
+                    sed -i 's/\"testdb\"/\"tpride-dev\"/g' $(Pipeline.Workspace)/manifests/themepark.yaml
+                  displayName: DB dev/test name configuration
+
+                - task: KubernetesManifest@0
+                  displayName: Create imagePullSecret
+                  inputs:
+                    action: createSecret
+                    secretName: $(imagePullSecret)
+                    dockerRegistryEndpoint: $(registryServiceConnection)
+                - task: KubernetesManifest@0
+                  displayName: Deploy to DevTest AKS cluster
+                  inputs:
+                    action: deploy
+                    manifests: |
+                      $(Pipeline.Workspace)/manifests/themepark.yaml
+                      $(Pipeline.Workspace)/manifests/themepark-service.yaml
+                    imagePullSecrets: |
+                      $(imagePullSecret)
+                    containers: |
+                      $(containerRegistry)/$(imageRepository):$(tag)
+
+                - download: current
+                  displayName: Postman download
+                  artifact: postman
+                - bash: |
+                    echo "🦸‍♂️ Database Postman test 🦸‍♂️"
+                    az login --service-principal -u $(THEME_PARK_SP_APPID) -p $(THEME_PARK_SP_PASSWORD) --tenant $(THEME_PARK_SP_TENANTID)
+                    ip=$(az network public-ip list | jq '. | map(select(.resourceGroup == "mc_theme_park_rg_theme-park-aks-dev_francecentral"))[0].ipAddress' | tr -d '\"')
+
+                    az cosmosdb mongodb database delete --account-name theme-park-cosmosdb --name tpride-dev --resource-group THEME_PARK_rg --yes                      # Replacing testing request with URI
+
+                    sudo systemctl start mongod
+                    sleep 3
+                    mongosh --file $(Pipeline.Workspace)/postman/dbseeder.js
+
+                    sed -i "s*URL*$ip*g" $(Pipeline.Workspace)/postman/postman-collection.json
+                    npm install -g newman
+                    newman run $(Pipeline.Workspace)/postman/postman-collection.json -x -r junit --reporter-junit-export $(Pipeline.Workspace)/PostmanResults.xml
+                    echo "✅ end of Database Postman testing 🥊"
+                  displayName: Postman test
+                - task: PublishTestResults@2
+                  displayName: Publishing postman tests
+                  inputs:
+                    testResultsFormat: "JUnit"
+                    testResultsFiles: "**/*.xml"
+                    searchFolder: $(Pipeline.Workspace)
+                    failTaskOnFailedTests: true
+
+  - stage: DeployProd
+    displayName: Production deployment stage
+    dependsOn: QA
+    jobs:
+      - deployment: Deploy
+        displayName: Deploy to PROD cluster
+        pool:
+          vmImage: $(vmImageName)
+        environment: "Prod.default"
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - download: current
+                  displayName: Downloading kubernetes manifests
+                  artifact: manifests
+                - bash: |
+                    # Changing service type
+                    sed -i "s/LoadBalancer/ClusterIP/g" $(Pipeline.Workspace)/manifests/themepark-service.yaml
+                    sed -i 's/\"testdb\"/\"tpride-prod\"/g' $(Pipeline.Workspace)/manifests/themepark.yaml
+                  displayName: DB prod name configuration
+
+                - task: KubernetesManifest@0
+                  displayName: Create imagePullSecret
+                  inputs:
+                    action: createSecret
+                    secretName: $(imagePullSecret)
+                    dockerRegistryEndpoint: $(registryServiceConnection)
+                - task: KubernetesManifest@0
+                  displayName: Deploy to Production AKS cluster
+                  inputs:
+                    action: deploy
+                    manifests: |
+                      $(Pipeline.Workspace)/manifests/themepark.yaml
+                      $(Pipeline.Workspace)/manifests/themepark-service.yaml
+                      $(Pipeline.Workspace)/manifests/hpa.yml
+                      $(Pipeline.Workspace)/manifests/ingress.yml
+                      $(Pipeline.Workspace)/manifests/traefik-http-to-https.yml
+                    imagePullSecrets: |
+                      $(imagePullSecret)
+                    containers: |
+                      $(containerRegistry)/$(imageRepository):$(tag)

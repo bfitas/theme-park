@@ -1,0 +1,187 @@
+{
+  "info": {
+    "_postman_id": "e4a42f44-a58f-4bfa-a5d0-5557a0a36247",
+    "name": "ride API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Endpoints TEST",
+      "item": [
+        {
+          "name": "Get all ride",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Getting all rides status is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://URL/ride",
+              "protocol": "http",
+              "host": "URL",
+              "path": "ride"
+            }
+          },
+          "response": []
+        },
+
+        {
+          "name": "Get single ride",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Getting single ride status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://URL/ride/1",
+              "protocol": "http",
+              "host": "URL",
+              "path": [
+								"ride",
+								"1"
+							]
+            }
+          },
+          "response": []
+        },
+
+        {
+          "name": "Get bad single ride",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Getting bad ride status is 404\", function () {",
+                  "    pm.response.to.have.status(404);",
+                  "});",
+                  "pm.test('expect response json contain error', function () {",
+                  "    var jsonData = pm.response.json();",
+							    "    pm.expect(jsonData.error).to.eql(\"Not Found\");",
+							    "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://URL/ride/4",
+              "protocol": "http",
+              "host": "URL",
+              "path": [
+								"ride",
+								"4"
+							]
+            }
+          },
+          "response": []
+        },
+
+        {
+          "name": "POST valid ride",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Posting valid ride status is 200, 201 or 202\", function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200,201,202]);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://URL/ride",
+              "protocol": "http",
+              "host": "URL",
+              "path": "ride"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"Eejanaika\", \"description\":\"Steel 4th Dimension Hypercoaster at Fuji-Q Highland in Fujiyoshida, Yamanashi, Japan.\", \"thrillFactor\":5,\"vomitFactor\":2}"
+            }
+          },
+          "response": []
+        },
+
+        {
+          "name": "POST bad ride",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Posting bad ride status is 400\", function () {",
+                  "    pm.response.to.have.status(400);",
+                  "});",
+                  "pm.test('expect response json contain error', function () {",
+                  "    var jsonData = pm.response.json();",
+							    "    pm.expect(jsonData.error).to.eql(\"Bad Request\");",
+							    "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://URL/ride",
+              "protocol": "http",
+              "host": "URL",
+              "path": "ride"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":1, \"description\":2, \"thrillFactor\":\"three\",\"vomitFactor\":\"four\"}"
+            }
+          },
+          "response": []
+        }
+      ],
+      "protocolProfileBehavior": {}
+    }
+  ],
+  "protocolProfileBehavior": {}
+}

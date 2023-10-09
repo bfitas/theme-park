@@ -1,0 +1,28 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: themepark-deployment
+
+spec:
+  selector:
+    matchLabels:
+      app: themepark
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: themepark
+    spec:
+      containers:
+      - name: themepark
+        image: dheang/theme-park-api:1.0.0
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 5000
+        env:
+        - name: SPRING_DATA_MONGODB_URI
+          value: "mongodb://localhost:27017"
+        - name: SPRING_DATA_MONGODB_DATABASE
+          value: "testdb"

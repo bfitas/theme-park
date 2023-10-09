@@ -1,0 +1,25 @@
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRoute
+metadata:
+  name: website-http-to-https
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`kubernetes.dh-datascientest.cloudns.ph`)
+      priority: 1000
+      kind: Rule
+      services:
+        - kind: TraefikService
+          name: noop@internal
+      middlewares:
+        - name: website-http-to-https
+---
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: website-http-to-https
+spec:
+  redirectScheme:
+    scheme: https
+    permanent: true
