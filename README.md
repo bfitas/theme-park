@@ -1,4 +1,4 @@
-# 🎢 Projet Theme Park - POEI ALTEN
+# 🎢 Projet Theme Park
 
 ## 👤 Mathias Berlancourt, Bilal Fitas, David Heang
 
